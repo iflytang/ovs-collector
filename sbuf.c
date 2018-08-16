@@ -3,12 +3,6 @@
 //
 
 #include "sbuf.h"
-#include <stdlib.h>
-#include <error.h>
-#include <printf.h>
-#include <stdio.h>
-
-
 static void Sem_init(sem_t *sem, int pshared, unsigned int value) {
     if (sem_init(sem, pshared, value) < 0)
         error(EXIT_FAILURE, 0, "Sem_init error");

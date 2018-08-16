@@ -7,7 +7,9 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <stdint-gcc.h>
-
+#include <stdlib.h>
+#include <error.h>
+#include <stdio.h>
 typedef struct  {
     uint32_t switch_id;
     uint32_t ingress_port_id;
@@ -19,7 +21,6 @@ typedef struct  {
 #endif
 }item_t;
 typedef struct {
-
     item_t *buf;
     int n;
     int front;
