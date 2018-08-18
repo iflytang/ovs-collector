@@ -13,7 +13,7 @@ static pcap_t *pcap;
 static MYSQL *mysql;
 static sbuf_t *sp = NULL;
 static int fd;
-
+static volatile int force_quit = 1;
 typedef struct data {
      int cnt1;
      int cnt2;
@@ -154,14 +154,12 @@ static void *write_data(void *a) {
     unsigned long long begin = rp_get_us();
     unsigned long long end;
 
-    while (1) {
+    while (force_quit) {
         item_t item = sbuf_remove(sp);
 
         switch (item.switch_id) {
             case 1:
                 if (item.ingress_port_id == 0 && item.egress_port_id == 1) {
-                    printf("the switchId is 0x01; ingressId is 0; egressId is 1; latency is %f\n",
-                            (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633);
                     pthread_mutex_lock(&data1.mutex);
                     data1.cnt1++;
                     data1.sum1 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
@@ -170,8 +168,6 @@ static void *write_data(void *a) {
                 break;
             case 2:
                 if (item.ingress_port_id == 0 && item.egress_port_id == 1) {
-                    printf("the switchId is 0x02; ingressId is 0; egressId is 1; latency is %f\n",
-                           (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633);
                     pthread_mutex_unlock(&data1.mutex);
                     data1.cnt2++;
                     data1.sum2 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
@@ -181,8 +177,6 @@ static void *write_data(void *a) {
             case 3:
 
                 if (item.ingress_port_id == 0 && item.egress_port_id == 1) {
-                    printf("the switchId is 0x03; ingressId is 0; egressId is 1; latency is %f\n",
-                           (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633);
                     pthread_mutex_lock(&data1.mutex);
                     data1.cnt3++;
                     data1.sum3 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
@@ -191,16 +185,12 @@ static void *write_data(void *a) {
                 break;
             case 4:
                 if (item.ingress_port_id == 0 && item.egress_port_id == 4) {
-                    printf("the switchId is 0x04; ingressId is 0; egressId is 4; latency is %f\n",
-                           (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633);
                     pthread_mutex_lock(&data1.mutex);
                     data1.cnt4++;
                     data1.sum4 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
                     pthread_mutex_unlock(&data1.mutex);
                 }
                 if (item.ingress_port_id == 1 && item.egress_port_id == 4) {
-                    printf("the switchId is 0x04; ingressId is 1; egressId is 4; latency is %f\n",
-                           (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633);
                     pthread_mutex_lock(&data1.mutex);
                     data1.cnt5++;
                     data1.sum5 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
@@ -221,7 +211,6 @@ static void *print_func(void *a) {
         sleep(2);
         pthread_mutex_lock(&data1.mutex);
 
-        //write(fd,&data1.sum5,sizeof(float));
         printf("--switch 0x01 sum1 %f cnt1 %d\n", data1.sum1, data1.cnt1);
         printf("--switch 0x02 sum2 %f cnt2 %d\n", data1.sum2, data1.cnt2);
         printf("--switch 0x03 sum3 %f cnt3 %d\n", data1.sum3, data1.cnt3);
@@ -232,30 +221,21 @@ static void *print_func(void *a) {
         printf("--switch 0x03 avgs latency(0,1) %f\n", data1.sum3 / data1.cnt3);
         printf("--switch 0x04 avgs latency(0,4) %f\n", data1.sum4 / data1.cnt4);
         printf("--switch 0x04 avgs latency(1,4) %f\n", data1.sum5 / data1.cnt5);
+
         pthread_mutex_unlock(&data1.mutex);
     }
 
     return NULL;
 }
 void free_func(int sig) {
+    force_quit = 0;
     sleep(1);
-    printf("--switch 0x01 sum1 %f cnt1 %d\n", data1.sum1, data1.cnt1);
-    printf("--switch 0x02 sum2 %f cnt2 %d\n", data1.sum2, data1.cnt2);
-    printf("--switch 0x03 sum3 %f cnt3 %d\n", data1.sum3, data1.cnt3);
-    printf("--switch 0x04 sum4 %f cnt4 %d\n", data1.sum4, data1.cnt4);
-    printf("--switch 0x04 sum5 %f cnt5 %d\n", data1.sum5, data1.cnt5);
-    printf("--switch 0x01 avgs latency(0,1) %f\n", data1.sum1 / data1.cnt1);
-    printf("--switch 0x02 avgs latency(0,1) %f\n", data1.sum2 / data1.cnt2);
-    printf("--switch 0x03 avgs latency(0,1) %f\n", data1.sum3 / data1.cnt3);
-    printf("--switch 0x04 avgs latency(0,4) %f\n", data1.sum4 / data1.cnt4);
-    printf("--switch 0x04 avgs latency(1,4) %f\n", data1.sum5 / data1.cnt5);
     sbuf_free(sp);
     printf("sbuf is cleaned\n");
     if (pcap) {
         pcap_close(pcap);
         printf("pcap is closed\n");
     }
-    close(fd);
     printf("Ending\n");
     exit(EXIT_SUCCESS);
 }
@@ -274,8 +254,7 @@ int main() {
     sp = &s;
     sbuf_init(sp, 1024);
     //open file
-    fd = open("txt", O_RDWR);
-    // calculate
+    //calculate
     pthread_t tid_write;
     pthread_create(&tid_write, NULL, (void *(*)(void *)) write_data, NULL);
 
@@ -285,9 +264,10 @@ int main() {
 
 
 #ifdef TEST
+
     while (1) {
 
-        while( (pkt = (unsigned char * )pcap_next( pcap, &pcap_hdr))!=NULL) {
+        while((pkt = (unsigned char * )pcap_next( pcap, &pcap_hdr))!=NULL) {
 
             process_int_pkt((unsigned char*)mysql, NULL, pkt);
             unsigned long long time1 = rp_get_us();
@@ -295,8 +275,11 @@ int main() {
         }
     }
 #else
-//capture
-    pcap_loop(pcap, -1, process_int_pkt, NULL);
+    //capture
+    while (force_quit && (pkt = (unsigned char *)pcap_next( pcap, &pcap_hdr)) != NULL) {
+        process_int_pkt(NULL, NULL, pkt);
+    }
+
 #endif
 
 
