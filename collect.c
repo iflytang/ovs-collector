@@ -5,7 +5,8 @@
 #include <sys/signal.h>
 #include <zconf.h>
 #include <fcntl.h>
-//#include <rte_common.h>
+#include <rte_common.h>
+#include <string.h>
 
 #define PROCESS_THREADS 12
 unsigned long long begin;
@@ -156,7 +157,7 @@ static void *write_data(void *a) {
 
     while (force_quit) {
         item_t item = sbuf_remove(sp);
-
+     //   printf("---force_quit is %d\n",force_quit);
         switch (item.switch_id) {
             case 1:
                 if (item.ingress_port_id == 0 && item.egress_port_id == 1) {
@@ -168,7 +169,7 @@ static void *write_data(void *a) {
                 break;
             case 2:
                 if (item.ingress_port_id == 0 && item.egress_port_id == 1) {
-                    pthread_mutex_unlock(&data1.mutex);
+                    pthread_mutex_lock(&data1.mutex);
                     data1.cnt2++;
                     data1.sum2 += (item.egress_tstamp - item.ingress_tstamp) * 16.0 / 633;
                     pthread_mutex_unlock(&data1.mutex);
@@ -201,13 +202,15 @@ static void *write_data(void *a) {
                 break;
         }
     }
+    printf("force_quit is %d write exit\n",force_quit);
     return NULL;
 
 }
 static void *print_func(void *a) {
-    pthread_detach(pthread_self());
-    while(1) {
+    //pthread_detach(pthread_self());
 
+    while(force_quit) {
+ //       printf("force_quit is %d\n",force_quit);
         sleep(2);
         pthread_mutex_lock(&data1.mutex);
 
@@ -221,23 +224,20 @@ static void *print_func(void *a) {
         printf("--switch 0x03 avgs latency(0,1) %f\n", data1.sum3 / data1.cnt3);
         printf("--switch 0x04 avgs latency(0,4) %f\n", data1.sum4 / data1.cnt4);
         printf("--switch 0x04 avgs latency(1,4) %f\n", data1.sum5 / data1.cnt5);
+        bzero(&data1, sizeof(data));
 
         pthread_mutex_unlock(&data1.mutex);
     }
+    printf("force_quit is %d print exit\n",force_quit);
 
     return NULL;
 }
 void free_func(int sig) {
-    force_quit = 0;
-    sleep(1);
-    sbuf_free(sp);
-    printf("sbuf is cleaned\n");
-    if (pcap) {
-        pcap_close(pcap);
-        printf("pcap is closed\n");
+    if (sig == SIGINT) {
+
+        force_quit = 0;
     }
-    printf("Ending\n");
-    exit(EXIT_SUCCESS);
+
 }
 int main() {
 //free
@@ -260,7 +260,7 @@ int main() {
 
     // print
     pthread_t tid_print;
-    pthread_create(&tid_print, NULL, (void *(*)(void *))print_func, NULL);
+    pthread_create(&tid_print, NULL, (void *(*)(void *)) print_func, NULL);
 
 
 #ifdef TEST
@@ -282,6 +282,16 @@ int main() {
 
 #endif
 
+    pthread_join(tid_write, NULL);
+    pthread_join(tid_print, NULL);
+    sbuf_free(sp);
+    printf("sbuf is cleaned\n");
+    if (pcap) {
+        pcap_close(pcap);
+        printf("pcap is closed\n");
+    }
+    printf("Ending\n");
 
-    return 0;
+    exit(EXIT_SUCCESS);
+
 }
