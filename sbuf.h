@@ -14,8 +14,14 @@ typedef struct  {
     uint32_t switch_id;
     uint32_t ingress_port_id;
     uint32_t egress_port_id;
+    uint32_t hop_latency;
+    int32_t optical_power_value;
+    uint8_t qid;
+    uint32_t q_occupancy;
     uint32_t ingress_tstamp;
     uint32_t egress_tstamp;
+    uint32_t pkt_len;
+    uint32_t retval;
 #ifdef COUNTER
     uint64_t counter;
 #endif
