@@ -4,12 +4,17 @@
 
 #ifndef NFP_CONTROLLER_SBUF_H
 #define NFP_CONTROLLER_SBUF_H
+
+//#define P4
+
 #include <semaphore.h>
 #include <pthread.h>
 #include <stdint-gcc.h>
 #include <stdlib.h>
 #include <error.h>
 #include <stdio.h>
+
+#ifdef P4  // p4-based devices
 typedef struct  {
     uint32_t switch_id;
     uint32_t ingress_port_id;
@@ -26,6 +31,22 @@ typedef struct  {
     uint64_t counter;
 #endif
 }item_t;
+
+#else // ovs-pof
+typedef struct {
+    uint32_t switch_id;
+    uint8_t in_port;
+    uint8_t out_port;
+    uint16_t hop_latency;
+    uint64_t ingress_time;
+    float bandwidth;
+    uint32_t hash;           /* indicate whether to store into files. */
+} item_t;
+
+#endif
+
+
+
 typedef struct {
     item_t *buf;
     int n;

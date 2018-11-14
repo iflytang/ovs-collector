@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 2.8)
 
 project(collect C)
 
@@ -11,10 +11,10 @@ add_executable(collect
         sbuf.c
         sbuf.h )
 
-target_include_directories(collect PUBLIC /home/niubin/dpdk-18.08/x86_64-native-linuxapp-gcc/include)
-link_directories(/home/niubin/dpdk-18.08/x86_64-native-linuxapp-gcc/lib)
-find_library(DPDK libdpdk.a /home/niubin/dpdk-18.08/x86_64-native-linuxapp-gcc/lib)
-target_link_libraries(collect dpdk pthread numa dl mysqlclient pcap )
+target_include_directories(collect PUBLIC /home/tsf/dpdk-16.07/x86_64-native-linuxapp-gcc/include)
+link_directories(/home/tsf/dpdk-16.07/x86_64-native-linuxapp-gcc/lib)
+find_library(DPDK libdpdk.a /home/tsf/dpdk-16.07/x86_64-native-linuxapp-gcc/lib)
+target_link_libraries(collect pthread dl pcap )
 add_definitions(-UDDEBUG -UDTEST -O3 -W -g -Wall)
 
 #

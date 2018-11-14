@@ -1,0 +1,1 @@
+/home/tsf/clionProject/int-collector/CMakeFiles/collect.dir

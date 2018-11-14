@@ -1,0 +1,1 @@
+/usr/bin/cc      CMakeFiles/collect.dir/collect.c.o CMakeFiles/collect.dir/sbuf.c.o  -o collect -rdynamic -lpthread -ldl -lpcap 
