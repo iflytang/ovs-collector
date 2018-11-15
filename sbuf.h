@@ -40,6 +40,8 @@ typedef struct {
     uint16_t hop_latency;
     uint64_t ingress_time;
     float bandwidth;
+
+    uint8_t map_info;
     uint32_t hash;           /* indicate whether to store into files. */
 } item_t;
 

@@ -7,6 +7,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <netinet/in.h>
+
+#define htonll(_x)    ((1==htonl(1)) ? (_x) : \
+                           ((uint64_t) htonl(_x) << 32) | htonl(_x >> 32))
+#define ntohll(_x)    ((1==ntohl(1)) ? (_x) : \
+                           ((uint64_t) ntohl(_x) << 32) | ntohl(_x >> 32))
+
+/* test packet processing performance per second. */
+#define TEST_SECOND_PERFORMANCE
 
 static pcap_t *pcap = NULL;
 static sbuf_t *sp = NULL;
@@ -73,14 +82,23 @@ static uint32_t simple_linear_hash(item_t *item) {
     uint32_t hash = item->switch_id * prime + prime;
     hash += item->in_port * prime;
     hash += item->out_port * prime;
-    hash += item->bandwidth * prime;
+    hash += ((uint32_t ) item->bandwidth) * prime;
+    hash += item->map_info * prime;
 
     item->hash = hash;
 
     return hash;
 }
 
+/* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth. */
+static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\n";
+
+static char * file_name = "ovs-collector.txt";
+static FILE * in_stream;
+
 uint32_t his_hash, pkt_cnt = 0;
+uint32_t test_cnt = 0; sec_cnt = 0;
+uint64_t start_time = 0, end_time = 0;
 static void process_int_pkt(unsigned char __attribute_unused__*a,
         const struct pcap_pkthdr __attribute_unused__*pkthdr,
         const uint8_t *pkt) {
@@ -93,7 +111,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 #define INT_HEADER_TTL_OFF          36
 #define INT_HEADER_MAPINFO_OFF      37
 #define INT_DATA_OFF                38
-#define STORE_CNT_THRESHOLD        1000
+#define STORE_CNT_THRESHOLD        10000
 
     /* INT data. */
     uint32_t switch_id = 0x00;
@@ -108,11 +126,16 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     /*===================== REJECT STAGE =======================*/
     /* only process INT packets with TTL > 0. */
     uint8_t pos = INT_HEADER_BASE;
+
+#ifdef TEST
     uint16_t type = (pkt[pos++] << 8) + pkt[pos++];
     uint8_t ttl = pkt[pos++];
     if (type != 0x0908 || ttl == 0x00) {
         return;
     }
+#endif
+
+    /*printf("process pkts: %d", pkt_cnt);*/
 
     /* if map_info doesn't contaion INT data. */
     uint8_t map_info = pkt[pos++];
@@ -122,6 +145,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /*===================== PARSE STAGE =======================*/
     pkt_cnt++;
+    test_cnt++;
     if (map_info & 0x1) {
         switch_id = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
     }
@@ -135,8 +159,11 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     if (map_info & (0x1 << 3)) {
-        ingress_time = (pkt[pos++] << 56) + (pkt[pos++] << 48) + (pkt[pos++] << 40) + (pkt[pos++] << 32) +
-                       (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+        /*ingress_time = (pkt[pos++] << 56) + (pkt[pos++] << 48) + (pkt[pos++] << 40) + (pkt[pos++] << 32) +
+                       (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];*/
+        memcpy(&ingress_time, &pkt[pos], sizeof(ingress_time));
+        ingress_time = ntohll(ingress_time);
+        pos += 8;
     }
 
     if (map_info & (0x1 << 4)) {
@@ -156,8 +183,26 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
             .hop_latency = (hop_latency != 0x00 ? hop_latency : default_value),
             .ingress_time = (ingress_time != 0x00 ? ingress_time : default_value),
             .bandwidth = (bandwidth != 0x00 ? bandwidth : default_value),
+            .map_info = map_info,
     };
 
+#ifdef TEST_SECOND_PERFORMANCE
+    if (test_cnt == 1) {
+        start_time = rp_get_us();
+        sec_cnt++;
+    }
+
+    end_time = rp_get_us();
+
+    if (end_time - start_time >= 1000000) {
+        printf("%d s processed %d packets/s\n", sec_cnt, test_cnt);
+        fflush(stdout);
+        test_cnt = 0;
+        start_time = end_time;
+    }
+#endif
+
+    /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
     if ((his_hash != simple_linear_hash(&item)) || (pkt_cnt > STORE_CNT_THRESHOLD)) {
         his_hash = item.hash;
@@ -166,21 +211,25 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
         return;
     }
 
-    sbuf_insert(sp, item);
+    printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
+                    item.hop_latency, item.ingress_time, item.bandwidth);
+    /*sbuf_insert(sp, item);*/
 }
 
 
 /* write to file. */
-static char * INT_FMT = "%u\t%u\t%u\t%u\t%u\t%f\n";
+/*static char * INT_FMT = "%u\t%u\t%u\t%u\t%u\t%f\n";
 static char * file_name = "ovs-collector.txt";
-static FILE * in_stream;
+static FILE * in_stream;*/
 static void *write_data() {
     while (force_quit) {
         item_t item = sbuf_remove(sp);
-        fprintf(in_stream, INT_FMT, item.switch_id, item.in_port, item.out_port,
-                           item.hop_latency, item.ingress_time, item.bandwidth);
+        /*fprintf(in_stream, INT_FMT, item.switch_id, item.in_port, item.out_port,
+                           item.hop_latency, item.ingress_time, item.bandwidth);*/
+        /*printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
+                        item.hop_latency, item.ingress_time, item.bandwidth);*/
     }
-    printf("force_quit is %d write exit\n",force_quit);
+    /*printf("force_quit is %d write exit\n",force_quit);*/
     return NULL;
 }
 
@@ -188,6 +237,12 @@ static void *write_data() {
 void free_func(int sig) {
     if (sig == SIGINT) {
         force_quit = 0;
+
+        /*printf("end\n");*/
+        fflush(stdout);
+        usleep(100000);
+
+        kill(getpid(),SIGKILL);
     }
 }
 
@@ -200,21 +255,23 @@ int main(int __attribute_unused__ argc, char __attribute_unused__ **argv) {
 
     sbuf_t s;
     sp = &s;
-    sbuf_init(sp, sizeof(item_t)*1024L);
+    sbuf_init(sp, sizeof(item_t)*1536L);
 
     /* write to file */
-    pthread_t tid_write;
+    /*pthread_t tid_write;
     in_stream = fopen(file_name, "w+");
     fprintf(in_stream, "switch_id in_port out_port hop_latency ingress_time bandwidth\n");
-    pthread_create(&tid_write, NULL, (void *(*)(void *)) write_data, NULL);
+    pthread_create(&tid_write, NULL, (void *(*)(void *)) write_data, NULL);*/
 
 
     /* capture */
-    while (force_quit && (pkt = (unsigned char *)pcap_next( pcap, &pcap_hdr)) != NULL) {
-        process_int_pkt(NULL, NULL, pkt);
+    while (force_quit) {
+        if ((pkt = (unsigned char *)pcap_next( pcap, &pcap_hdr)) != NULL) {
+            process_int_pkt(NULL, NULL, pkt);
+        }
     }
 
-    pthread_join(tid_write, NULL);
+    /*pthread_join(tid_write, NULL);*/
 
     sbuf_free(sp);
     printf("sbuf is cleaned\n");
