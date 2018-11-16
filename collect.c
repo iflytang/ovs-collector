@@ -14,6 +14,9 @@
 #define ntohll(_x)    ((1==ntohl(1)) ? (_x) : \
                            ((uint64_t) ntohl(_x) << 32) | ntohl(_x >> 32))
 
+#define Max(a, b) ((a) >= (b) ? (a) : (b))
+#define Min(a, b) ((a) <= (b) ? (a) : (b))
+
 /* test packet processing performance per second. */
 #define TEST_SECOND_PERFORMANCE
 
@@ -90,15 +93,18 @@ static uint32_t simple_linear_hash(item_t *item) {
     return hash;
 }
 
-/* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth. */
-static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\n";
+/* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth + cnt. */
+static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 
 static char * file_name = "ovs-collector.txt";
 static FILE * in_stream;
 
-uint32_t his_hash, pkt_cnt = 0;
-uint32_t test_cnt = 0; sec_cnt = 0;
-uint64_t start_time = 0, end_time = 0;
+uint32_t his_hash = 0, hash = 1;          /* used as condition for statistics. */
+uint32_t pkt_cnt = 0;                     /* used as condition for statistics. */
+uint32_t test_cnt = 0; sec_cnt = 0;       /* used for performance test. */
+uint64_t start_time = 0, end_time = 0;    /* used for performance test. */
+uint16_t last_hop_latency = 1, time_flag = 0;   /* used as condition for statistics. */
+
 static void process_int_pkt(unsigned char __attribute_unused__*a,
         const struct pcap_pkthdr __attribute_unused__*pkthdr,
         const uint8_t *pkt) {
@@ -111,7 +117,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 #define INT_HEADER_TTL_OFF          36
 #define INT_HEADER_MAPINFO_OFF      37
 #define INT_DATA_OFF                38
-#define STORE_CNT_THRESHOLD        10000
+#define STORE_CNT_THRESHOLD        1000
 
     /* INT data. */
     uint32_t switch_id = 0x00;
@@ -204,15 +210,22 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
-    if ((his_hash != simple_linear_hash(&item)) || (pkt_cnt > STORE_CNT_THRESHOLD)) {
-        his_hash = item.hash;
-        pkt_cnt = 0;
+    time_flag = Max(last_hop_latency, item.hop_latency) / Max(Min(last_hop_latency, item.hop_latency), 1);
+    hash = simple_linear_hash(&item);
+    if ((time_flag >= 5) || (his_hash != hash) || (pkt_cnt > STORE_CNT_THRESHOLD)) {
+        /*his_hash = item.hash;*/
+        /*pkt_cnt = 0;*/
     } else {
         return;
     }
 
+    /* we also store cnt to show how many pkts we last stored as one record. */
     printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
-                    item.hop_latency, item.ingress_time, item.bandwidth);
+                    item.hop_latency, item.ingress_time, item.bandwidth, pkt_cnt);
+    last_hop_latency = item.hop_latency;
+    his_hash = item.hash;
+    pkt_cnt = 0;
+
     /*sbuf_insert(sp, item);*/
 }
 
@@ -277,7 +290,7 @@ int main(int __attribute_unused__ argc, char __attribute_unused__ **argv) {
     printf("sbuf is cleaned\n");
     if (pcap) {
         pcap_close(pcap);
-        fclose(in_stream);
+        /*fclose(in_stream);*/
         printf("pcap is closed\n");
     }
     printf("Ending\n");
