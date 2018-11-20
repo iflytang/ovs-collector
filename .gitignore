@@ -1,0 +1,6 @@
+*.txt
+cmake-build-debug
+*.cbp
+CMakeFiles
+Makefile
+cmake_install.cmake
