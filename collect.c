@@ -1,3 +1,9 @@
+/**
+ * @author tsf
+ * @date 18-11-14l
+ * @desp collector
+ */
+
 #include "sbuf.h"
 #include <pcap.h>
 #include <stdint.h>
