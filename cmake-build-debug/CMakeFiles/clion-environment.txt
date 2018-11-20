@@ -1,2 +1,0 @@
-Options: 
-CMake: 3.7.2@/home/tsf/Clion/bin/cmake/bin/cmake

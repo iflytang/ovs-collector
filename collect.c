@@ -20,15 +20,28 @@
 /* test packet processing performance per second. */
 #define TEST_SECOND_PERFORMANCE
 
+/* used to track on pkt_cnt[] */
+#define MAX_DEVICE 6
+
+/* define macro header definition. */
+#define ETH_HEADER_LEN              14
+#define IPV4_HEADER_LEN             20
+#define INT_HEADER_BASE             34
+#define INT_HEADER_TYPE_OFF         34
+#define INT_HEADER_TTL_OFF          36
+#define INT_HEADER_MAPINFO_OFF      37
+#define INT_DATA_OFF                38
+#define STORE_CNT_THRESHOLD        1000
+
 static pcap_t *pcap = NULL;
 static sbuf_t *sp = NULL;
 #define  __attribute_unused__ __attribute__((unused))
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 1518;
+    int snaplen = 64;
     int promisc = 1;
-    char *iface = "eth6";
+    char *iface = "enp47s0f3";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -99,25 +112,25 @@ static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 static char * file_name = "ovs-collector.txt";
 static FILE * in_stream;
 
-uint32_t his_hash = 0, hash = 1;          /* used as condition for statistics. */
-uint32_t pkt_cnt = 0;                     /* used as condition for statistics. */
-uint32_t test_cnt = 0; sec_cnt = 0;       /* used for performance test. */
-uint64_t start_time = 0, end_time = 0;    /* used for performance test. */
-uint16_t last_hop_latency = 1, time_flag = 0;   /* used as condition for statistics. */
+/* used as 'hash' condition for statistics. 'switch_id' or 'ttl' as index. */
+uint32_t his_hash[MAX_DEVICE] = {0}, hash[MAX_DEVICE] = {1, 1, 1, 1, 1, 1};
+
+/* used as 'time_flag' condition for statistics. 'switch_id' or 'ttl' as index. */
+uint16_t last_hop_latency[MAX_DEVICE] = {1, 1, 1, 1, 1, 1}, time_flag[MAX_DEVICE] = {0};
+
+/* used as 'cnt_threshold' condition for statistics. 'switch_id' or 'ttl' as index. */
+uint32_t pkt_cnt[MAX_DEVICE] = {0};
+
+/* used for performance test per second. */
+uint32_t test_cnt = 0, sec_cnt = 0;
+uint64_t start_time = 0, end_time = 0;
+
+/* as default_value. */
+uint8_t default_value = 0x00;
 
 static void process_int_pkt(unsigned char __attribute_unused__*a,
         const struct pcap_pkthdr __attribute_unused__*pkthdr,
         const uint8_t *pkt) {
-
-/* define macro definition. */
-#define ETH_HEADER_LEN              14
-#define IPV4_HEADER_LEN             20
-#define INT_HEADER_BASE             34
-#define INT_HEADER_TYPE_OFF         34
-#define INT_HEADER_TTL_OFF          36
-#define INT_HEADER_MAPINFO_OFF      37
-#define INT_DATA_OFF                38
-#define STORE_CNT_THRESHOLD        1000
 
     /* INT data. */
     uint32_t switch_id = 0x00;
@@ -127,11 +140,11 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     uint64_t ingress_time = 0x00;
     float bandwidth = 0x00;
 
-    uint8_t default_value = 0x00;
+    /* used to indicate where to start to parse. */
+    uint8_t pos = INT_HEADER_BASE;
 
     /*===================== REJECT STAGE =======================*/
     /* only process INT packets with TTL > 0. */
-    uint8_t pos = INT_HEADER_BASE;
 
 #ifdef TEST
     uint16_t type = (pkt[pos++] << 8) + pkt[pos++];
@@ -150,11 +163,13 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     /*===================== PARSE STAGE =======================*/
-    pkt_cnt++;
-    test_cnt++;
     if (map_info & 0x1) {
         switch_id = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
     }
+
+    /* WARN: if 'switch_id' is set from 1, 2 ... otherwise, use 'ttl' as index. */
+    pkt_cnt[switch_id]++;
+    test_cnt++;
 
     if (map_info & (0x1 << 1)) {
         in_port = pkt[pos++];
@@ -192,6 +207,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
             .map_info = map_info,
     };
 
+/* output how many packets we can parse in a second. */
 #ifdef TEST_SECOND_PERFORMANCE
     if (test_cnt == 1) {
         start_time = rp_get_us();
@@ -210,9 +226,10 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
-    time_flag = Max(last_hop_latency, item.hop_latency) / Max(Min(last_hop_latency, item.hop_latency), 1);
-    hash = simple_linear_hash(&item);
-    if ((time_flag >= 5) || (his_hash != hash) || (pkt_cnt > STORE_CNT_THRESHOLD)) {
+    time_flag[switch_id] = Max(last_hop_latency[switch_id], item.hop_latency) / Max(Min(last_hop_latency[switch_id], item.hop_latency), 1);
+    hash[switch_id] = simple_linear_hash(&item);
+    if ((time_flag[switch_id] >= 5) || (his_hash[switch_id] != hash[switch_id])
+            || (pkt_cnt[switch_id] > STORE_CNT_THRESHOLD)) {
         /*his_hash = item.hash;*/
         /*pkt_cnt = 0;*/
     } else {
@@ -221,10 +238,10 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /* we also store cnt to show how many pkts we last stored as one record. */
     printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
-                    item.hop_latency, item.ingress_time, item.bandwidth, pkt_cnt);
-    last_hop_latency = item.hop_latency;
-    his_hash = item.hash;
-    pkt_cnt = 0;
+                    item.hop_latency, item.ingress_time, item.bandwidth, pkt_cnt[switch_id]);
+    last_hop_latency[switch_id] = item.hop_latency;
+    his_hash[switch_id] = item.hash;
+    pkt_cnt[switch_id] = 0;
 
     /*sbuf_insert(sp, item);*/
 }

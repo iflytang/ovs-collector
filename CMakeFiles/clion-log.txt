@@ -1,4 +1,0 @@
-Cannot generate into /home/tsf/clionProject/int-collector
-It is already used for project /home/tsf/int-collector
-
-Please either delete it manually or select another generation directory
