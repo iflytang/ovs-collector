@@ -45,9 +45,9 @@ static sbuf_t *sp = NULL;
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 64;
+    int snaplen = 128;
     int promisc = 1;
-    char *iface = "enp47s0f3";
+    char *iface = "p1p4";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
