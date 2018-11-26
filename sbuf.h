@@ -47,6 +47,16 @@ typedef struct {
 
 #endif
 
+/* used for collect dpid. */
+#define MAX_DP_NUM  5
+typedef struct {
+    uint32_t dpid[MAX_DP_NUM];
+
+    uint8_t map_info;
+    uint8_t ttl;
+    uint32_t hash;           /* indicate whether to store into files. */
+} dpid_t;
+
 
 
 typedef struct {

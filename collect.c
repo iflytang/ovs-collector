@@ -1,7 +1,7 @@
 /**
  * @author tsf
  * @date 18-11-14l
- * @desp collector
+ * @desp collect dpid: used for path revalidation.
  */
 
 #include "sbuf.h"
@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <netinet/in.h>
+
+#define TEST
 
 #define htonll(_x)    ((1==htonl(1)) ? (_x) : \
                            ((uint64_t) htonl(_x) << 32) | htonl(_x >> 32))
@@ -112,11 +114,29 @@ static uint32_t simple_linear_hash(item_t *item) {
     return hash;
 }
 
+static uint32_t simple_linear_dpid_hash(dpid_t *dpid) {
+    /* hop_latency and ingress_time are volatile, do not hash them. */
+    static int prime = 31;
+
+    uint32_t hash = dpid->dpid[0] * prime + prime;
+    for (int i=1; i < MAX_DP_NUM; i++) {
+        hash += dpid->dpid[i] * prime + prime;
+    }
+
+    hash += dpid->ttl * prime + prime;
+    hash += dpid->map_info * prime;
+
+    dpid->hash = hash;
+
+    return hash;
+}
+
 /* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth + cnt. */
 static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 
-static char * file_name = "ovs-collector.txt";
-static FILE * in_stream;
+/* ttl + map_info + dpid_1 + dpid_2 + dpid_3 + dpid_4 + dpid_5 + cnt. */
+static char * DPID_FMT = "%u\t%x\t%u\t%u\t%u\t%u\t%u\t%u\t";
+uint32_t dpid_index = 0;     // use array[0]
 
 /* used as 'hash' condition for statistics. 'switch_id' or 'ttl' as index. */
 uint32_t his_hash[MAX_DEVICE] = {0}, hash[MAX_DEVICE] = {1, 1, 1, 1, 1, 1};
@@ -139,12 +159,8 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
         const uint8_t *pkt) {
 
     /* INT data. */
-    uint32_t switch_id = 0x00;
-    uint8_t in_port = 0x00;
-    uint8_t out_port = 0x00;
-    uint16_t hop_latency = 0x00;
-    uint64_t ingress_time = 0x00;
-    float bandwidth = 0x00;
+    dpid_t dpid;
+    memset(&dpid, 0x00, sizeof(dpid));
 
     /* used to indicate where to start to parse. */
     uint8_t pos = INT_HEADER_BASE;
@@ -152,7 +168,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     /*===================== REJECT STAGE =======================*/
     /* only process INT packets with TTL > 0. */
 
-#ifdef TEST
+#ifdef TEST // the ttl determine how many 'dpid' contained in the packet.
     uint16_t type = (pkt[pos++] << 8) + pkt[pos++];
     uint8_t ttl = pkt[pos++];
     if (type != 0x0908 || ttl == 0x00) {
@@ -169,49 +185,10 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     /*===================== PARSE STAGE =======================*/
-    if (map_info & 0x1) {
-        switch_id = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+    for (int i=0; i < ttl; i++) {
+        // reverse the order
+        dpid.dpid[ttl-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
     }
-
-    /* WARN: if 'switch_id' is set from 1, 2 ... otherwise, use 'ttl' as index. */
-    pkt_cnt[switch_id]++;
-    test_cnt++;
-
-    if (map_info & (0x1 << 1)) {
-        in_port = pkt[pos++];
-    }
-
-    if (map_info & (0x1 << 2)) {
-        out_port = pkt[pos++];
-    }
-
-    if (map_info & (0x1 << 3)) {
-        /*ingress_time = (pkt[pos++] << 56) + (pkt[pos++] << 48) + (pkt[pos++] << 40) + (pkt[pos++] << 32) +
-                       (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];*/
-        memcpy(&ingress_time, &pkt[pos], sizeof(ingress_time));
-        ingress_time = ntohll(ingress_time);
-        pos += 8;
-    }
-
-    if (map_info & (0x1 << 4)) {
-        hop_latency = (pkt[pos++] << 8) + pkt[pos++];
-    }
-
-    if (map_info & (0x1 << 5)) {
-        memcpy(&bandwidth, &pkt[pos], sizeof(bandwidth));
-        pos += 4;
-    }
-
-    /*===================== STORE STAGE =======================*/
-    item_t item = {
-            .switch_id = (switch_id != 0x00 ? switch_id : default_value),
-            .in_port = (in_port != 0x00 ? in_port : default_value),
-            .out_port = (out_port != 0x00 ? out_port : default_value),
-            .hop_latency = (hop_latency != 0x00 ? hop_latency : default_value),
-            .ingress_time = (ingress_time != 0x00 ? ingress_time : default_value),
-            .bandwidth = (bandwidth != 0x00 ? bandwidth : default_value),
-            .map_info = map_info,
-    };
 
 /* output how many packets we can parse in a second. */
 #ifdef TEST_SECOND_PERFORMANCE
@@ -232,10 +209,9 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
-    time_flag[switch_id] = Max(last_hop_latency[switch_id], item.hop_latency) / Max(Min(last_hop_latency[switch_id], item.hop_latency), 1);
-    hash[switch_id] = simple_linear_hash(&item);
-    if ((time_flag[switch_id] >= 5) || (his_hash[switch_id] != hash[switch_id])
-            || (pkt_cnt[switch_id] > STORE_CNT_THRESHOLD)) {
+    hash[dpid_index] = simple_linear_dpid_hash(&dpid);
+    if ((his_hash[dpid_index] != hash[dpid_index])
+            || (pkt_cnt[dpid_index] > STORE_CNT_THRESHOLD)) {
         /*his_hash = item.hash;*/
         /*pkt_cnt = 0;*/
     } else {
@@ -243,11 +219,11 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     /* we also store cnt to show how many pkts we last stored as one record. */
-    printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
-                    item.hop_latency, item.ingress_time, item.bandwidth, pkt_cnt[switch_id]);
-    last_hop_latency[switch_id] = item.hop_latency;
-    his_hash[switch_id] = item.hash;
-    pkt_cnt[switch_id] = 0;
+    printf(DPID_FMT, ttl, map_info, dpid.dpid[0], dpid.dpid[1], dpid.dpid[2],
+                    dpid.dpid[3], dpid.dpid[4], pkt_cnt[dpid_index]);
+
+    his_hash[dpid_index] = dpid.hash;
+    pkt_cnt[dpid_index] = 0;
 
     /*sbuf_insert(sp, item);*/
 }
