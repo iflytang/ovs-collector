@@ -47,9 +47,9 @@ static sbuf_t *sp = NULL;
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 128;
+    int snaplen = 64;
     int promisc = 1;
-    char *iface = "p1p4";
+    char *iface = "eth1";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -70,6 +70,8 @@ static int init_pcap() {
 
         printf("Succesfully set direction to '%s'\n", "PCAP_D_IN");
     }
+
+    printf("TTL\tmapInfo\tdpid[0]\tdpid[1]\tdpid[2]\tdpid[3]\tdpid[4]\tcnt\n");
 
     return 0;
 }
@@ -135,7 +137,7 @@ static uint32_t simple_linear_dpid_hash(dpid_t *dpid) {
 static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 
 /* ttl + map_info + dpid_1 + dpid_2 + dpid_3 + dpid_4 + dpid_5 + cnt. */
-static char * DPID_FMT = "%u\t%x\t%u\t%u\t%u\t%u\t%u\t%u\t";
+static char * DPID_FMT = "%x\t%x\t%x\t%x\t%x\t%x\t%x\t%d\n";
 uint32_t dpid_index = 0;     // use array[0]
 
 /* used as 'hash' condition for statistics. 'switch_id' or 'ttl' as index. */
@@ -185,9 +187,13 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     /*===================== PARSE STAGE =======================*/
+    pkt_cnt[dpid_index]++;
+    test_cnt++;
+
     for (int i=0; i < ttl; i++) {
         // reverse the order
-        dpid.dpid[ttl-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+        dpid.dpid[ttl-1-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+        /*printf("dpid[%d]=%x\n", ttl-i, dpid.dpid[ttl-i]);*/
     }
 
 /* output how many packets we can parse in a second. */
