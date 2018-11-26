@@ -1,6 +1,6 @@
 /**
  * @author tsf
- * @date 18-11-14l
+ * @date 18-11-14
  * @desp collect dpid: used for path revalidation.
  */
 
@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 
 #define TEST
+#define PATH_REVALIDATION
 
 #define htonll(_x)    ((1==htonl(1)) ? (_x) : \
                            ((uint64_t) htonl(_x) << 32) | htonl(_x >> 32))
@@ -29,7 +30,7 @@
 #define TEST_SECOND_PERFORMANCE
 
 /* used to track on pkt_cnt[] */
-#define MAX_DEVICE 6
+#define MAX_DEVICE 5
 
 /* define macro header definition. */
 #define ETH_HEADER_LEN              14
@@ -49,7 +50,7 @@ static volatile int force_quit = 1;
 static int init_pcap() {
     int snaplen = 64;
     int promisc = 1;
-    char *iface = "eth1";
+    char *iface = "eth6";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -71,7 +72,7 @@ static int init_pcap() {
         printf("Succesfully set direction to '%s'\n", "PCAP_D_IN");
     }
 
-    printf("TTL\tmapInfo\tdpid[0]\tdpid[1]\tdpid[2]\tdpid[3]\tdpid[4]\tcnt\n");
+    printf("TTL\tmapInfo\tdpid[0]\tfx[0]\tdpid[1]\tfx[1]\tdpid[2]\tfx[2]\tdpid[3]\tfx[3]\tdpid[4]\tfx[4]\tcnt\n");
 
     return 0;
 }
@@ -136,8 +137,8 @@ static uint32_t simple_linear_dpid_hash(dpid_t *dpid) {
 /* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth + cnt. */
 static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 
-/* ttl + map_info + dpid_1 + dpid_2 + dpid_3 + dpid_4 + dpid_5 + cnt. */
-static char * DPID_FMT = "%x\t%x\t%x\t%x\t%x\t%x\t%x\t%d\n";
+/* ttl + map_info + dpid_1 + fx_1 + dpid_2 + fx_2 + dpid_3 +fx_3 + dpid_4 + fx_4 + dpid_5 + fx_5 + cnt. */
+static char * DPID_FMT = "%x\t%x\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%d\n";
 uint32_t dpid_index = 0;     // use array[0]
 
 /* used as 'hash' condition for statistics. 'switch_id' or 'ttl' as index. */
@@ -193,7 +194,10 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     for (int i=0; i < ttl; i++) {
         // reverse the order
         dpid.dpid[ttl-1-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
-        /*printf("dpid[%d]=%x\n", ttl-i, dpid.dpid[ttl-i]);*/
+#ifdef PATH_REVALIDATION
+        dpid.fx[ttl-1-i] = pkt[pos++];
+#endif
+        /*printf("dpid[%d]=%x, fx=%d\n", ttl-i, dpid.dpid[ttl-1-i], dpid.fx[ttl-1-i]);*/
     }
 
 /* output how many packets we can parse in a second. */
@@ -225,8 +229,9 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     }
 
     /* we also store cnt to show how many pkts we last stored as one record. */
-    printf(DPID_FMT, ttl, map_info, dpid.dpid[0], dpid.dpid[1], dpid.dpid[2],
-                    dpid.dpid[3], dpid.dpid[4], pkt_cnt[dpid_index]);
+    printf(DPID_FMT, ttl, map_info,
+                    dpid.dpid[0], dpid.fx[0] ,dpid.dpid[1], dpid.fx[1], dpid.dpid[2], dpid.fx[2],
+                    dpid.dpid[3], dpid.fx[3], dpid.dpid[4], dpid.fx[4], pkt_cnt[dpid_index]);
 
     his_hash[dpid_index] = dpid.hash;
     pkt_cnt[dpid_index] = 0;
