@@ -28,9 +28,13 @@
 
 /* test packet processing performance per second. */
 #define TEST_SECOND_PERFORMANCE
+/* test the INT header. */
+#define TEST_INT_HEADER
+/* test packet write cost. */
+#define FILTER_PKTS
 
 /* used to track on pkt_cnt[] */
-#define MAX_DEVICE 5
+#define MAX_DEVICE 6
 
 /* define macro header definition. */
 #define ETH_HEADER_LEN              14
@@ -72,7 +76,7 @@ static int init_pcap() {
         printf("Succesfully set direction to '%s'\n", "PCAP_D_IN");
     }
 
-    printf("TTL\tmapInfo\tdpid[0]\tfx[0]\tdpid[1]\tfx[1]\tdpid[2]\tfx[2]\tdpid[3]\tfx[3]\tdpid[4]\tfx[4]\tcnt\n");
+    printf("TTL\tmapInfo\tdpid[0]\tfx[0]\tdpid[1]\tfx[1]\tdpid[2]\tfx[2]\tdpid[3]\tfx[3]\tdpid[4]\tfx[4]\tdpid[5]\tfx[5]\tcnt\n");
 
     return 0;
 }
@@ -137,8 +141,8 @@ static uint32_t simple_linear_dpid_hash(dpid_t *dpid) {
 /* map_info + switch_id +in_port + out_port + hop_latency + ingress_time + bandwidth + cnt. */
 static char * INT_FMT = "%x\t%u\t%u\t%u\t%u\t%llx\t%f\t%u\n";
 
-/* ttl + map_info + dpid_1 + fx_1 + dpid_2 + fx_2 + dpid_3 +fx_3 + dpid_4 + fx_4 + dpid_5 + fx_5 + cnt. */
-static char * DPID_FMT = "%x\t%x\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%d\n";
+/* ttl + map_info + dpid_0 + fx_0 + dpid_1 + fx_1 + dpid_2 + fx_2 + dpid_3 +fx_3 + dpid_4 + fx_4 + dpid_5 + fx_5 + cnt. */
+static char * DPID_FMT = "%x\t%x\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%x\t%u\t%d\n";
 uint32_t dpid_index = 0;     // use array[0]
 
 /* used as 'hash' condition for statistics. 'switch_id' or 'ttl' as index. */
@@ -151,7 +155,7 @@ uint16_t last_hop_latency[MAX_DEVICE] = {1, 1, 1, 1, 1, 1}, time_flag[MAX_DEVICE
 uint32_t pkt_cnt[MAX_DEVICE] = {0};
 
 /* used for performance test per second. */
-uint32_t test_cnt = 0, sec_cnt = 0;
+uint32_t test_cnt = 0, sec_cnt = 0, write_cnt = 0;
 uint64_t start_time = 0, end_time = 0;
 
 /* as default_value. */
@@ -171,7 +175,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     /*===================== REJECT STAGE =======================*/
     /* only process INT packets with TTL > 0. */
 
-#ifdef TEST // the ttl determine how many 'dpid' contained in the packet.
+#ifdef TEST_INT_HEADER // the ttl determine how many 'dpid' contained in the packet.
     uint16_t type = (pkt[pos++] << 8) + pkt[pos++];
     uint8_t ttl = pkt[pos++];
     if (type != 0x0908 || ttl == 0x00) {
@@ -191,6 +195,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     pkt_cnt[dpid_index]++;
     test_cnt++;
 
+    // In path-revalidation scenario, we only have 'dpid' metadata fields.
     for (int i=0; i < ttl; i++) {
         // reverse the order
         dpid.dpid[ttl-1-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
@@ -210,13 +215,15 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     end_time = rp_get_us();
 
     if (end_time - start_time >= 1000000) {
-        printf("%d s processed %d packets/s\n", sec_cnt, test_cnt);
+        printf("%d s processed %d pkt/s, wrote %d pkt/s\n", sec_cnt, test_cnt, write_cnt);
         fflush(stdout);
         test_cnt = 0;
+        write_cnt = 0;
         start_time = end_time;
     }
 #endif
 
+#ifdef FILTER_PKTS
     /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
     hash[dpid_index] = simple_linear_dpid_hash(&dpid);
@@ -227,14 +234,17 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     } else {
         return;
     }
+#endif
 
     /* we also store cnt to show how many pkts we last stored as one record. */
     printf(DPID_FMT, ttl, map_info,
                     dpid.dpid[0], dpid.fx[0] ,dpid.dpid[1], dpid.fx[1], dpid.dpid[2], dpid.fx[2],
-                    dpid.dpid[3], dpid.fx[3], dpid.dpid[4], dpid.fx[4], pkt_cnt[dpid_index]);
+                    dpid.dpid[3], dpid.fx[3], dpid.dpid[4], dpid.fx[4], dpid.dpid[5], dpid.fx[5],
+                    pkt_cnt[dpid_index]);
 
     his_hash[dpid_index] = dpid.hash;
     pkt_cnt[dpid_index] = 0;
+    write_cnt++;
 
     /*sbuf_insert(sp, item);*/
 }

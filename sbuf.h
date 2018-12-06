@@ -1,6 +1,3 @@
-//
-// Created by niubin on 18-7-26.
-//
 
 #ifndef NFP_CONTROLLER_SBUF_H
 #define NFP_CONTROLLER_SBUF_H
@@ -48,7 +45,7 @@ typedef struct {
 #endif
 
 /* used for collect dpid. */
-#define MAX_DP_NUM  5
+#define MAX_DP_NUM  6
 typedef struct {    // ovs-pof
     uint32_t dpid[MAX_DP_NUM];
     uint8_t  fx[MAX_DP_NUM];    // fx = k * dpid + b; to revalidate path
