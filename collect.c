@@ -25,6 +25,10 @@
 
 /* test packet processing performance per second. */
 #define TEST_SECOND_PERFORMANCE
+/* test the INT header. */
+#define TEST_INT_HEADER
+/* test packet write cost. */
+#define FILTER_PKTS
 
 /* used to track on pkt_cnt[] */
 #define MAX_DEVICE 6
@@ -47,7 +51,7 @@ static volatile int force_quit = 1;
 static int init_pcap() {
     int snaplen = 64;
     int promisc = 1;
-    char *iface = "enp47s0f3";
+    char *iface = "p1p4";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -128,7 +132,7 @@ uint16_t last_hop_latency[MAX_DEVICE] = {1, 1, 1, 1, 1, 1}, time_flag[MAX_DEVICE
 uint32_t pkt_cnt[MAX_DEVICE] = {0};
 
 /* used for performance test per second. */
-uint32_t test_cnt = 0, sec_cnt = 0;
+uint32_t test_cnt = 0, sec_cnt = 0, write_cnt = 0;
 uint64_t start_time = 0, end_time = 0;
 
 /* as default_value. */
@@ -152,7 +156,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     /*===================== REJECT STAGE =======================*/
     /* only process INT packets with TTL > 0. */
 
-#ifdef TEST
+#ifdef TEST_INT_HEADER
     uint16_t type = (pkt[pos++] << 8) + pkt[pos++];
     uint8_t ttl = pkt[pos++];
     if (type != 0x0908 || ttl == 0x00) {
@@ -223,13 +227,15 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     end_time = rp_get_us();
 
     if (end_time - start_time >= 1000000) {
-        printf("%d s processed %d packets/s\n", sec_cnt, test_cnt);
+        printf("%d s processed %d pkt/s, wrote %d pkt/s\n", sec_cnt, test_cnt, write_cnt);
         fflush(stdout);
         test_cnt = 0;
+        write_cnt = 0;
         start_time = end_time;
     }
 #endif
 
+#ifdef FILTER_PKTS
     /*===================== FILTER STAGE =======================*/
     /* we don't process no information updating packets. */
     time_flag[switch_id] = Max(last_hop_latency[switch_id], item.hop_latency) / Max(Min(last_hop_latency[switch_id], item.hop_latency), 1);
@@ -241,6 +247,8 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     } else {
         return;
     }
+#endif
+
 
     /* we also store cnt to show how many pkts we last stored as one record. */
     printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
@@ -248,6 +256,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     last_hop_latency[switch_id] = item.hop_latency;
     his_hash[switch_id] = item.hash;
     pkt_cnt[switch_id] = 0;
+    write_cnt++;
 
     /*sbuf_insert(sp, item);*/
 }
