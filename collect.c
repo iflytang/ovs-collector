@@ -52,9 +52,9 @@ static sbuf_t *sp = NULL;
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 64;
+    int snaplen = 80;
     int promisc = 1;
-    char *iface = "eth6";
+    char *iface = "enp47s0f2";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -152,7 +152,8 @@ uint32_t his_hash[MAX_DEVICE] = {0}, hash[MAX_DEVICE] = {1, 1, 1, 1, 1, 1};
 uint16_t last_hop_latency[MAX_DEVICE] = {1, 1, 1, 1, 1, 1}, time_flag[MAX_DEVICE] = {0};
 
 /* used as 'cnt_threshold' condition for statistics. 'switch_id' or 'ttl' as index. */
-uint32_t pkt_cnt[MAX_DEVICE] = {0};
+uint32_t pkt_cnt[MAX_DEVICE+1] = {0};
+uint32_t total_pkt_cnt[MAX_DEVICE+1] = {0};
 
 /* used for performance test per second. */
 uint32_t test_cnt = 0, sec_cnt = 0, write_cnt = 0;
@@ -199,6 +200,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     for (int i=0; i < ttl; i++) {
         // reverse the order
         dpid.dpid[ttl-1-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+        pkt_cnt[dpid.dpid[ttl-1-i]]++;
 #ifdef PATH_REVALIDATION
         dpid.fx[ttl-1-i] = pkt[pos++];
 #endif
@@ -215,11 +217,17 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     end_time = rp_get_us();
 
     if (end_time - start_time >= 1000000) {
-        printf("%d s processed %d pkt/s, wrote %d pkt/s\n", sec_cnt, test_cnt, write_cnt);
+        printf("%d s processed %d pkt/s, wrote %d pkt/s, d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d\n",
+                sec_cnt, test_cnt, write_cnt, pkt_cnt[1], pkt_cnt[2], pkt_cnt[3], pkt_cnt[4], pkt_cnt[5],
+               pkt_cnt[6]);
         fflush(stdout);
         test_cnt = 0;
         write_cnt = 0;
         start_time = end_time;
+        for (int i=1; i <= MAX_DEVICE; i++) {
+            total_pkt_cnt[i] += pkt_cnt[i];
+            pkt_cnt[i] = 0;
+        }
     }
 #endif
 
@@ -237,10 +245,10 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 #endif
 
     /* we also store cnt to show how many pkts we last stored as one record. */
-    printf(DPID_FMT, ttl, map_info,
+    /*printf(DPID_FMT, ttl, map_info,
                     dpid.dpid[0], dpid.fx[0] ,dpid.dpid[1], dpid.fx[1], dpid.dpid[2], dpid.fx[2],
                     dpid.dpid[3], dpid.fx[3], dpid.dpid[4], dpid.fx[4], dpid.dpid[5], dpid.fx[5],
-                    pkt_cnt[dpid_index]);
+                    pkt_cnt[dpid_index]);*/
 
     his_hash[dpid_index] = dpid.hash;
     pkt_cnt[dpid_index] = 0;
@@ -270,6 +278,11 @@ static void *write_data() {
 void free_func(int sig) {
     if (sig == SIGINT) {
         force_quit = 0;
+
+        /* printf the result. */
+        printf("final_result: d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d\n",
+                                total_pkt_cnt[1], total_pkt_cnt[2], total_pkt_cnt[3],
+                                total_pkt_cnt[4], total_pkt_cnt[5], total_pkt_cnt[6]);
 
         /*printf("end\n");*/
         fflush(stdout);
