@@ -55,6 +55,16 @@ typedef struct {    // ovs-pof
     uint32_t hash;           /* indicate whether to store into files. */
 } dpid_t;
 
+/* used for collect bandwidth. */
+typedef struct {   // ovs-pof
+    uint64_t ingress_time[MAX_DP_NUM];    // ingress_time at each node
+    float bandwidth[MAX_DP_NUM];
+    uint32_t relative_timestamp[MAX_DP_NUM];     /* when we store this struct, store with a relative timestamp. */
+
+    uint8_t map_info;
+    uint8_t ttl;
+    uint32_t hash;    // we may not use hash
+} bd_t;
 
 
 typedef struct {
