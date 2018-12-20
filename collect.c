@@ -43,15 +43,25 @@
 #define INT_DATA_OFF                38
 #define STORE_CNT_THRESHOLD        1000
 
+/* define metadata order in md_type_cnt[]. */
+#define DPID              0
+#define IN_PORT           1
+#define OUT_PORT          2
+#define IGS_TIME          3
+#define HOP_LANTENCY      4
+#define BANDWIDTH         5
+/* used as index, show how many md_type. */
+#define MAX_METADATA      6
+
 static pcap_t *pcap = NULL;
 static sbuf_t *sp = NULL;
 #define  __attribute_unused__ __attribute__((unused))
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 64;
+    int snaplen = 80;
     int promisc = 1;
-    char *iface = "p1p4";
+    char *iface = "enp47s0f2";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -72,6 +82,8 @@ static int init_pcap() {
 
         printf("Succesfully set direction to '%s'\n", "PCAP_D_IN");
     }
+
+    printf("second recv_pkts mapInfo dpid in_port out_port ingress_time hop_latency bandwidth\n");
 
     return 0;
 }
@@ -138,17 +150,19 @@ uint64_t start_time = 0, end_time = 0;
 /* as default_value. */
 uint8_t default_value = 0x00;
 
+/* metadata type cnt.
+ * bitmap format: x | x | bandwidth | hop_latency || ingress_time | out_port | in_port | dpid
+ * */
+uint32_t md_type_cnt[MAX_METADATA] = {0};
+
+
 static void process_int_pkt(unsigned char __attribute_unused__*a,
         const struct pcap_pkthdr __attribute_unused__*pkthdr,
         const uint8_t *pkt) {
 
     /* INT data. */
-    uint32_t switch_id = 0x00;
-    uint8_t in_port = 0x00;
-    uint8_t out_port = 0x00;
-    uint16_t hop_latency = 0x00;
-    uint64_t ingress_time = 0x00;
-    float bandwidth = 0x00;
+    item_t item;
+    memset(&item, 0x00, sizeof(item));
 
     /* used to indicate where to start to parse. */
     uint8_t pos = INT_HEADER_BASE;
@@ -168,54 +182,52 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
     /* if map_info doesn't contaion INT data. */
     uint8_t map_info = pkt[pos++];
+    item.map_info = map_info;
     if (get_set_bits_of_byte(map_info) == 0) {
         return;
     }
 
     /*===================== PARSE STAGE =======================*/
     if (map_info & 0x1) {
-        switch_id = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+//        item.switch_id = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+        md_type_cnt[DPID]++;
     }
 
     /* WARN: if 'switch_id' is set from 1, 2 ... otherwise, use 'ttl' as index. */
-    pkt_cnt[switch_id]++;
+    pkt_cnt[item.switch_id]++;
     test_cnt++;
 
     if (map_info & (0x1 << 1)) {
-        in_port = pkt[pos++];
+//        item.in_port = pkt[pos++];
+        md_type_cnt[IN_PORT]++;
     }
 
     if (map_info & (0x1 << 2)) {
-        out_port = pkt[pos++];
+//        item.out_port = pkt[pos++];
+        md_type_cnt[OUT_PORT]++;
     }
 
     if (map_info & (0x1 << 3)) {
         /*ingress_time = (pkt[pos++] << 56) + (pkt[pos++] << 48) + (pkt[pos++] << 40) + (pkt[pos++] << 32) +
                        (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];*/
-        memcpy(&ingress_time, &pkt[pos], sizeof(ingress_time));
-        ingress_time = ntohll(ingress_time);
+//        memcpy(&item.ingress_time, &pkt[pos], sizeof(item.ingress_time));
+//        item.ingress_time = ntohll(item.ingress_time);
         pos += 8;
+        md_type_cnt[IGS_TIME]++;
     }
 
     if (map_info & (0x1 << 4)) {
-        hop_latency = (pkt[pos++] << 8) + pkt[pos++];
+//        item.hop_latency = (pkt[pos++] << 8) + pkt[pos++];
+        md_type_cnt[HOP_LANTENCY]++;
     }
 
     if (map_info & (0x1 << 5)) {
-        memcpy(&bandwidth, &pkt[pos], sizeof(bandwidth));
+//        memcpy(&item.bandwidth, &pkt[pos], sizeof(item.bandwidth));
         pos += 4;
+        md_type_cnt[BANDWIDTH]++;
     }
 
     /*===================== STORE STAGE =======================*/
-    item_t item = {
-            .switch_id = (switch_id != 0x00 ? switch_id : default_value),
-            .in_port = (in_port != 0x00 ? in_port : default_value),
-            .out_port = (out_port != 0x00 ? out_port : default_value),
-            .hop_latency = (hop_latency != 0x00 ? hop_latency : default_value),
-            .ingress_time = (ingress_time != 0x00 ? ingress_time : default_value),
-            .bandwidth = (bandwidth != 0x00 ? bandwidth : default_value),
-            .map_info = map_info,
-    };
 
 /* output how many packets we can parse in a second. */
 #ifdef TEST_SECOND_PERFORMANCE
@@ -227,38 +239,25 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     end_time = rp_get_us();
 
     if (end_time - start_time >= 1000000) {
-        printf("%d s processed %d pkt/s, wrote %d pkt/s\n", sec_cnt, test_cnt, write_cnt);
+        /*printf("%d s processed %d pkt/s, mapInfo:%x, dpid:%d, inport:%d, outport:%d, ingress:%d, latency:%d, bd:%d\n",
+                sec_cnt, test_cnt, map_info, md_type_cnt[0], md_type_cnt[1], md_type_cnt[2],
+                md_type_cnt[3], md_type_cnt[4], md_type_cnt[5]);*/
+
+        printf("%d\t %d\t %x\t %d\t %d\t %d\t %d\t %d\t %d\n",
+               sec_cnt, test_cnt, map_info, md_type_cnt[0], md_type_cnt[1], md_type_cnt[2],
+               md_type_cnt[3], md_type_cnt[4], md_type_cnt[5]);
         fflush(stdout);
         test_cnt = 0;
         write_cnt = 0;
         start_time = end_time;
+        memset(md_type_cnt, 0x00, sizeof(md_type_cnt));
+
+//        for (int i=0; i < MAX_METADATA; i++) {
+//            md_type_cnt[i] = 0;
+//        }
     }
 #endif
 
-#ifdef FILTER_PKTS
-    /*===================== FILTER STAGE =======================*/
-    /* we don't process no information updating packets. */
-    time_flag[switch_id] = Max(last_hop_latency[switch_id], item.hop_latency) / Max(Min(last_hop_latency[switch_id], item.hop_latency), 1);
-    hash[switch_id] = simple_linear_hash(&item);
-    if ((time_flag[switch_id] >= 5) || (his_hash[switch_id] != hash[switch_id])
-            || (pkt_cnt[switch_id] > STORE_CNT_THRESHOLD)) {
-        /*his_hash = item.hash;*/
-        /*pkt_cnt = 0;*/
-    } else {
-        return;
-    }
-#endif
-
-
-    /* we also store cnt to show how many pkts we last stored as one record. */
-    printf(INT_FMT, item.map_info, item.switch_id, item.in_port, item.out_port,
-                    item.hop_latency, item.ingress_time, item.bandwidth, pkt_cnt[switch_id]);
-    last_hop_latency[switch_id] = item.hop_latency;
-    his_hash[switch_id] = item.hash;
-    pkt_cnt[switch_id] = 0;
-    write_cnt++;
-
-    /*sbuf_insert(sp, item);*/
 }
 
 
