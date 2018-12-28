@@ -16,7 +16,7 @@
 #include <netinet/in.h>
 
 #define TEST
-#define PATH_REVALIDATION
+//#define PATH_REVALIDATION
 
 #define htonll(_x)    ((1==htonl(1)) ? (_x) : \
                            ((uint64_t) htonl(_x) << 32) | htonl(_x >> 32))
@@ -32,6 +32,8 @@
 #define TEST_INT_HEADER
 /* test packet write cost. */
 #define FILTER_PKTS
+/* if parse in_port metadata. */
+#define MONITOR_IN_PORT
 
 /* used to track on pkt_cnt[] */
 #define MAX_DEVICE 6
@@ -54,7 +56,7 @@ static volatile int force_quit = 1;
 static int init_pcap() {
     int snaplen = 80;
     int promisc = 1;
-    char *iface = "enp47s0f2";
+    char *iface = "p1p3";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -76,7 +78,7 @@ static int init_pcap() {
         printf("Succesfully set direction to '%s'\n", "PCAP_D_IN");
     }
 
-    printf("TTL\tmapInfo\tdpid[0]\tfx[0]\tdpid[1]\tfx[1]\tdpid[2]\tfx[2]\tdpid[3]\tfx[3]\tdpid[4]\tfx[4]\tdpid[5]\tfx[5]\tcnt\n");
+    printf("sec\t pkts\t mapInfo\t d1\t d2\t d3\t d4\t d5\t d6\t d5.p1\t d5.p2\t d5.p3\t\n");
 
     return 0;
 }
@@ -88,14 +90,21 @@ __attribute_unused__ static inline unsigned long long rp_get_us(void) {
 }
 
 __attribute_unused__ static void print_pkt(uint32_t pkt_len, uint8_t *pkt){
-    printf("pkt6 is %d\n", pkt[6]);
+//    printf("pkt6 is %d\n", pkt[6]);
     uint32_t i = 0;
     for (i = 0; i < pkt_len; ++i) {
-        printf(" pkt %d is  %02x", i, pkt[i]);
+//        printf(" pkt %d is  %02x", i, pkt[i]);
+        printf("%02x ", pkt[i]);
+        if ((i + 1) % 8 == 0) {
+            printf("  ");  // 2 space
+        }
+
         if ((i + 1) % 16 == 0) {
             printf("\n");
         }
     }
+
+    printf("\n");
 }
 
 static uint8_t get_set_bits_of_byte(uint8_t byte){
@@ -155,6 +164,10 @@ uint16_t last_hop_latency[MAX_DEVICE] = {1, 1, 1, 1, 1, 1}, time_flag[MAX_DEVICE
 uint32_t pkt_cnt[MAX_DEVICE+1] = {0};
 uint32_t total_pkt_cnt[MAX_DEVICE+1] = {0};
 
+/* count device.in_port numbers. at most 4 ports in a devices. */
+uint32_t in_port_cnt[MAX_DEVICE+1][4 + 1] = {{0}, {0}, {0}, {0}, {0}, {0}, {0}};
+uint32_t total_in_port_cnt[MAX_DEVICE+1][4 + 1] = {{0}, {0}, {0}, {0}, {0}, {0}, {0}};
+
 /* used for performance test per second. */
 uint32_t test_cnt = 0, sec_cnt = 0, write_cnt = 0;
 uint64_t start_time = 0, end_time = 0;
@@ -197,10 +210,24 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     test_cnt++;
 
     // In path-revalidation scenario, we only have 'dpid' metadata fields.
+    uint32_t tmp_dpid;
+    uint8_t in_port;
     for (int i=0; i < ttl; i++) {
         // reverse the order
-        dpid.dpid[ttl-1-i] = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
-        pkt_cnt[dpid.dpid[ttl-1-i]]++;
+        if (map_info & (0x01 << 0)) {  // deviceId
+            tmp_dpid = (pkt[pos++] << 24) + (pkt[pos++] << 16) + (pkt[pos++] << 8) + pkt[pos++];
+            pkt_cnt[tmp_dpid]++;
+        }
+#ifdef MONITOR_IN_PORT
+        if(map_info & (0x01 << 1)) {   // in_port
+            in_port = pkt[pos++];
+            in_port_cnt[tmp_dpid][in_port]++;
+        }
+#endif
+        /*if (tmp_dpid == 5 && (test_cnt % 2000 == 0)) {
+            printf("mapInfo:%d, ttl:%d -- dpid: %u, in_port:%u\n", map_info, ttl - 1 - i, tmp_dpid, in_port);
+        }*/
+
 #ifdef PATH_REVALIDATION
         dpid.fx[ttl-1-i] = pkt[pos++];
 #endif
@@ -217,17 +244,31 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
     end_time = rp_get_us();
 
     if (end_time - start_time >= 1000000) {
-        printf("%d s processed %d pkt/s, wrote %d pkt/s, d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d\n",
-                sec_cnt, test_cnt, write_cnt, pkt_cnt[1], pkt_cnt[2], pkt_cnt[3], pkt_cnt[4], pkt_cnt[5],
-               pkt_cnt[6]);
+//        printf("%d s processed %d pkt/s, wrote %d pkt/s, d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d, d5.port1:%d, d5.port2:%d\n",
+//                sec_cnt, test_cnt, write_cnt, pkt_cnt[1], pkt_cnt[2], pkt_cnt[3], pkt_cnt[4], pkt_cnt[5],
+//               pkt_cnt[6], in_port_cnt[5][1], in_port_cnt[5][2]);
+        printf("%d\t %d\t %u\t %d\t %d\t %d\t %d\t %d\t %d\t %d\t %d\t %d\n", sec_cnt, test_cnt, map_info,
+                                                pkt_cnt[1], pkt_cnt[2], pkt_cnt[3], pkt_cnt[4], pkt_cnt[5],
+                                                pkt_cnt[6], in_port_cnt[5][1], in_port_cnt[5][2], in_port_cnt[5][3]);
         fflush(stdout);
         test_cnt = 0;
         write_cnt = 0;
         start_time = end_time;
         for (int i=1; i <= MAX_DEVICE; i++) {
             total_pkt_cnt[i] += pkt_cnt[i];
+            for (int j=1; j<=4; j++) {
+                total_in_port_cnt[i][j] += in_port_cnt[i][j];
+                in_port_cnt[i][j] = 0;
+            }
             pkt_cnt[i] = 0;
         }
+
+//        if (sec_cnt % 15 ==0) {  // output result per 15s
+//            printf("%d sec (sum): d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d, d5.port1:%d, d5.port2:%d\n",
+//                   sec_cnt, total_pkt_cnt[1], total_pkt_cnt[2], total_pkt_cnt[3],
+//                   total_pkt_cnt[4], total_pkt_cnt[5], total_pkt_cnt[6],
+//                   total_in_port_cnt[5][1], total_in_port_cnt[5][2]);
+//        }
     }
 #endif
 
@@ -280,9 +321,10 @@ void free_func(int sig) {
         force_quit = 0;
 
         /* printf the result. */
-        printf("final_result: d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d\n",
+        /*printf("final_result: d1:%d, d2:%d, d3:%d, d4:%d, d5:%d, d6:%d, d5.port1:%d, d5.port2:%d\n",
                                 total_pkt_cnt[1], total_pkt_cnt[2], total_pkt_cnt[3],
-                                total_pkt_cnt[4], total_pkt_cnt[5], total_pkt_cnt[6]);
+                                total_pkt_cnt[4], total_pkt_cnt[5], total_pkt_cnt[6],
+                                total_in_port_cnt[5][1], total_in_port_cnt[5][2]);*/
 
         /*printf("end\n");*/
         fflush(stdout);
@@ -314,6 +356,7 @@ int main(int __attribute_unused__ argc, char __attribute_unused__ **argv) {
     while (force_quit) {
         if ((pkt = (unsigned char *)pcap_next( pcap, &pcap_hdr)) != NULL) {
             process_int_pkt(NULL, NULL, pkt);
+//            print_pkt(80, pkt);
         }
     }
 
