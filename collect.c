@@ -56,9 +56,9 @@ static sbuf_t *sp = NULL;
 static volatile int force_quit = 1;
 
 static int init_pcap() {
-    int snaplen = 120;
+    int snaplen = 64;
     int promisc = 1;
-    char *iface = "enp47s0f2";
+    char *iface = "p1p3";
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if ((pcap = pcap_open_live(iface, snaplen, promisc, 0, errbuf)) == NULL) {
@@ -250,8 +250,8 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
 
 //        printf("ttl:%d          ", i);
         /*===================== WRITE FOR PER NODE, RESPECTIVELY : no thresh =====================*/
-        if ((his_bd.bandwidth[ttl-1-i]) != (bd.bandwidth[ttl-1-i]) /*|| (pkt_cnt[ttl-i] > STORE_CNT_THRESHOLD)*/
-                || should_write) {
+        if (/*(his_bd.bandwidth[ttl-1-i]) != (bd.bandwidth[ttl-1-i]) *//*|| (pkt_cnt[ttl-i] > STORE_CNT_THRESHOLD)*//*
+                ||*/ should_write) {
             // uncomment here if record all bd.
 //            his_bd.bandwidth[ttl-1-i] = bd.bandwidth[ttl-1-i];
 //            printf("d%x\t %f\t %d\t %.3f\t\n", ttl-i, bd.bandwidth[ttl-1-i], pkt_cnt[ttl-i], relative_time);   // id + bd + cnt + r_time
@@ -264,6 +264,7 @@ static void process_int_pkt(unsigned char __attribute_unused__*a,
                 write_cnt++;
                 pkt_cnt[ttl-i] = 0;   // in fact, it's the last record cnt value.
                 start_time = end_time;
+                break;
             }
         }
     }
